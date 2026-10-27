@@ -1,6 +1,19 @@
 # 🎬 CineSync — Watch Together, Google Drive & VLC Studio
 
+**Live Production App**: **[https://cinephile-web.pages.dev](https://cinephile-web.pages.dev)**  
+**Custom Short Domain**: **`cinephile.dev`** (Cloudflare Pages mapped)
+
 **CineSync** is a standalone, single-file Watch Party & real-time synchronized video streaming application ([`watch-together.html`](file:///C:/Users/sk621/.gemini/antigravity/scratch/cinesync/watch-together.html) / [`cinesync-watch-together.html`](file:///C:/Users/sk621/.gemini/antigravity/scratch/cinesync/cinesync-watch-together.html)) built with Tailwind CSS, HTML5 Media APIs, Web Audio API, and PeerJS WebRTC networking.
+
+---
+
+## 🌐 Live Production Deployment
+
+* **Production URL**: [https://cinephile-web.pages.dev](https://cinephile-web.pages.dev)
+* **Clean Watch Route**: [https://cinephile-web.pages.dev/watch-together](https://cinephile-web.pages.dev/watch-together)
+* **Custom Domain**: Bound to `cinephile.dev` & `www.cinephile.dev` on Cloudflare Pages.
+* **Hosting Platform**: Cloudflare Pages with edge caching, automated HTTPS, and zero-config WebRTC signaling.
+* **GitHub Repository**: [https://github.com/sami9dev/cinephile-web](https://github.com/sami9dev/cinephile-web)
 
 ---
 
@@ -114,6 +127,7 @@ Access via the **⚙️ Settings Gear** in the top navigation bar:
 
 ```
 cinesync/
+├── index.html                    # Production entrypoint for Cloudflare Pages
 ├── watch-together.html           # Main application file with full features & styles
 ├── cinesync-watch-together.html  # Standalone distributable single-file app
 └── README.md                     # Architecture, features, and setup guide
