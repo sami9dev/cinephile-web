@@ -202,6 +202,15 @@
 </head>
 <body class="min-h-screen flex flex-col bg-surface-950 text-slate-100 select-none">
 
+  <!-- In-App Browser Warning Banner for WhatsApp/Telegram/Instagram -->
+  <div id="inAppBrowserNotice" class="hidden bg-amber-500/20 border-b border-amber-500/30 text-amber-200 px-3 py-2 text-xs flex items-center justify-between gap-2 backdrop-blur-md sticky top-0 z-50">
+    <div class="flex items-center gap-1.5">
+      <span>💡</span>
+      <span>For camera, mic &amp; video sync: tap <strong>⋮</strong> (top right) ➔ <strong>Open in Chrome / Browser</strong></span>
+    </div>
+    <button type="button" onclick="this.parentElement.remove()" class="text-amber-300 hover:text-white text-xs px-1">✕</button>
+  </div>
+
   <!-- Toast Notification Stack -->
   <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-sm pointer-events-none"></div>
 
@@ -476,6 +485,24 @@
             <span id="mediaPermissionText">Camera or mic permission was blocked. Please click the site settings / lock icon in your browser URL bar to allow hardware access.</span>
           </div>
           <button id="closePermissionNoticeBtn" type="button" class="px-2 py-1 text-slate-400 hover:text-white text-xs shrink-0">✕</button>
+        </div>
+
+        <!-- Host Movie Selected Notice for Companion -->
+        <div id="localFileSyncNotice" class="absolute top-14 inset-x-4 p-3.5 rounded-2xl bg-surface-900/95 border border-brand-orange/40 text-slate-200 text-xs shadow-2xl z-30 flex flex-col sm:flex-row items-center justify-between gap-3 hidden backdrop-blur-md">
+          <div class="flex items-center gap-2.5">
+            <span class="text-xl shrink-0">🎬</span>
+            <div>
+              <p class="font-semibold text-white">Host loaded: <span id="hostMovieFileName" class="text-brand-orange font-mono">movie.mp4</span></p>
+              <p class="text-[11px] text-slate-400">In Shared Local mode, pick your copy of this movie on your phone to lock sync.</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <label for="noticePickFileInput" class="cursor-pointer px-3 py-1.5 rounded-xl bg-brand-orange hover:bg-orange-600 text-white font-semibold transition text-xs shadow active:scale-95 flex items-center gap-1.5">
+              <span>📁 Select File on Phone</span>
+              <input id="noticePickFileInput" type="file" accept="video/*,.mkv,.mp4,.webm,.mov" class="hidden" />
+            </label>
+            <button id="closeNoticeBtn" type="button" class="px-2 py-1 text-slate-400 hover:text-white text-xs">✕</button>
+          </div>
         </div>
 
         <!-- VLC OSD Notification Pill -->
@@ -2787,17 +2814,17 @@
         state.conn = conn;
         state.remotePeerId = conn.peer;
 
-        conn.on('open', function () {
+        function handlePeerConnected() {
           state.isConnectedToPeer = true;
+          state.simFriendEnabled = false;
+          const simLabel = document.getElementById('simFriendBtnLabel');
+          if (simLabel) simLabel.textContent = 'Demo: OFF';
+          const friendLabel = document.getElementById('friendNameLabel');
+          if (friendLabel) friendLabel.textContent = state.friendProfile.name || (state.isHost ? 'Guest Friend' : 'Host Friend');
           updateConnectionStatusUI('connected', 'Connected P2P (' + conn.peer + ')');
           updateRoleBadgeUI();
           showToast('Connected to friend (' + conn.peer + ')!');
           appendSyncLog('Connected with ' + conn.peer);
-          if (state.simFriendEnabled) {
-            state.simFriendEnabled = false;
-            const simLabel = document.getElementById('simFriendBtnLabel');
-            if (simLabel) simLabel.textContent = 'Demo: OFF';
-          }
 
           if (state.isHost && state.preferences.roomLocked) {
             sendPeerPacket({ type: 'ROOM_LOCKED', message: 'Room has been locked by the host.' });
@@ -2819,8 +2846,25 @@
               isPlaying: state.isPlaying,
               currentTime: state.currentTime
             });
+            if (state.currentLocalFileName) {
+              sendPeerPacket({
+                type: 'LOCAL_FILE_SELECTED',
+                fileName: state.currentLocalFileName
+              });
+            }
+            if (state.vlcStream && state.vlcStreamActive) {
+              const call = state.peer.call(conn.peer, state.vlcStream, { metadata: { streamType: 'vlc_screen', title: nowPlayingTitle.textContent } });
+              state.vlcCall = call;
+              sendPeerPacket({ type: 'VLC_STREAM_START', title: nowPlayingTitle.textContent });
+            }
           }
-        });
+        }
+
+        if (conn.open) {
+          handlePeerConnected();
+        } else {
+          conn.on('open', handlePeerConnected);
+        }
 
         conn.on('data', function (data) {
           if (!data || typeof data !== 'object') return;
@@ -2830,6 +2874,22 @@
             handleDriftCorrection(data.currentTime, state.isPlaying);
           } else if (data.type === 'DRIVE_LOAD') {
             loadGoogleDriveMovie(data.fileId, data.playMode, data.apiKey, false);
+          } else if (data.type === 'VLC_STREAM_START') {
+            nowPlayingTitle.textContent = data.title || 'Live Stream from Host';
+            currentSourceLabel.textContent = 'Host Stream';
+            showToast('🎬 Host started streaming screen/VLC!');
+            const localNotice = document.getElementById('localFileSyncNotice');
+            if (localNotice) localNotice.classList.add('hidden');
+          } else if (data.type === 'VLC_STREAM_STOP') {
+            showToast('Host stopped streaming.');
+          } else if (data.type === 'LOCAL_FILE_SELECTED') {
+            const localNotice = document.getElementById('localFileSyncNotice');
+            const localName = document.getElementById('hostMovieFileName');
+            if (localNotice && localName) {
+              localName.textContent = data.fileName || 'Movie File';
+              localNotice.classList.remove('hidden');
+            }
+            showToast('🎬 Host opened: ' + (data.fileName || 'Movie File'));
           } else if (data.type === 'CHAT') {
             const sender = data.senderName || 'Friend';
             appendChatMessage(sender, data.text, false, data.movieTimestamp, data.senderAvatar || null);
@@ -2915,14 +2975,52 @@
           peer.on('open', function (id) {
             state.roomCode = id;
             roomCodeDisplay.textContent = id;
-            updateConnectionStatusUI('solo', state.isHost ? 'Solo (Host)' : 'Solo (Guest)');
-            updateRoleBadgeUI();
             if (inviteLinkPreview) inviteLinkPreview.value = getInviteLink();
+
+            // If arrived with room parameter or remote peer ID, connect directly now that peer is open!
+            if (state.remotePeerId && !state.isConnectedToPeer) {
+              updateConnectionStatusUI('connecting', 'Connecting to ' + state.remotePeerId + '...');
+              showToast('Connecting to room ' + state.remotePeerId + '...');
+              const conn = peer.connect(state.remotePeerId, { reliable: true });
+              setupPeerConnection(conn);
+            } else {
+              updateConnectionStatusUI('solo', state.isHost ? 'Solo (Host)' : 'Solo (Guest)');
+            }
+            updateRoleBadgeUI();
           });
           peer.on('connection', function (conn) {
             setupPeerConnection(conn);
           });
           peer.on('call', function (call) {
+            const streamType = call.metadata && call.metadata.streamType;
+            if (streamType === 'vlc_screen') {
+              state.vlcCall = call;
+              call.answer();
+              call.on('stream', function (remoteStream) {
+                state.mode = 'video-element';
+                stageEmptyOverlay.classList.add('hidden');
+                driveEmbedIframe.classList.add('hidden');
+                cinemaDemoCanvas.classList.add('hidden');
+                mainVideoPlayer.classList.remove('hidden');
+                mainVideoPlayer.srcObject = remoteStream;
+                mainVideoPlayer.play().catch(function () {});
+                state.isPlaying = true;
+                updatePlayButtonsUI();
+                nowPlayingTitle.textContent = (call.metadata && call.metadata.title) || 'Live Stream from Host';
+                currentSourceLabel.textContent = 'Host Stream';
+                const localNotice = document.getElementById('localFileSyncNotice');
+                if (localNotice) localNotice.classList.add('hidden');
+                showToast('🎬 Watching Host live video stream!');
+              });
+              call.on('close', function () {
+                showToast('Host stream ended.');
+                mainVideoPlayer.srcObject = null;
+                emptyStartDemoBtn.click();
+              });
+              return;
+            }
+
+            // Standard Webcam Call
             state.currentCall = call;
             call.answer(state.localStream || undefined);
             call.on('stream', function (remoteStream) {
@@ -2943,6 +3041,13 @@
             appendSyncLog('Broker notice: ' + (err.type || err.message || err));
             if (err.type === 'peer-unavailable') {
               showToast('Friend code not found. Ensure friend has CineSync open.');
+              updateConnectionStatusUI('error', 'Peer Unavailable');
+            }
+          });
+        } catch (err) {
+          appendSyncLog('Error initializing Peer: ' + err.message);
+        }
+      }
               updateConnectionStatusUI('error', 'Peer Unavailable');
             }
           });
@@ -3286,6 +3391,7 @@
         const file = e.target.files && e.target.files[0];
         if (!file) return;
         state.mode = 'video-element';
+        state.currentLocalFileName = file.name;
         stageEmptyOverlay.classList.add('hidden');
         driveEmbedIframe.classList.add('hidden');
         cinemaDemoCanvas.classList.add('hidden');
@@ -3296,7 +3402,15 @@
         currentSourceLabel.textContent = file.name;
         sourceModal.classList.add('hidden');
         sourceModal.classList.remove('flex');
+        const localNotice = document.getElementById('localFileSyncNotice');
+        if (localNotice) localNotice.classList.add('hidden');
         showToast('Loaded movie: ' + file.name);
+
+        sendPeerPacket({
+          type: 'LOCAL_FILE_SELECTED',
+          fileName: file.name
+        });
+
         mainVideoPlayer.onloadedmetadata = function () {
           state.duration = mainVideoPlayer.duration || 180;
           seekTo(0, true);
@@ -3327,6 +3441,8 @@
           return;
         }
         navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).then(function (stream) {
+          state.vlcStream = stream;
+          state.vlcStreamActive = true;
           state.mode = 'video-element';
           stageEmptyOverlay.classList.add('hidden');
           driveEmbedIframe.classList.add('hidden');
@@ -3339,6 +3455,23 @@
           nowPlayingTitle.textContent = 'Live VLC Window Stream';
           currentSourceLabel.textContent = 'VLC Stream';
           showToast('Streaming desktop VLC window!');
+
+          // Broadcast VLC stream directly to companion!
+          if (state.peer && state.remotePeerId && state.isConnectedToPeer) {
+            const call = state.peer.call(state.remotePeerId, stream, { metadata: { streamType: 'vlc_screen', title: 'Live VLC Window Stream' } });
+            state.vlcCall = call;
+            sendPeerPacket({ type: 'VLC_STREAM_START', title: 'Live VLC Window Stream' });
+          }
+
+          stream.getVideoTracks()[0].onended = function () {
+            state.vlcStreamActive = false;
+            state.vlcStream = null;
+            if (state.vlcCall) {
+              try { state.vlcCall.close(); } catch (e) {}
+              state.vlcCall = null;
+            }
+            sendPeerPacket({ type: 'VLC_STREAM_STOP' });
+          };
         }).catch(function () {});
       });
 
@@ -3414,6 +3547,7 @@
         const file = e.target.files && e.target.files[0];
         if (!file) return;
         state.mode = 'video-element';
+        state.currentLocalFileName = file.name;
         stageEmptyOverlay.classList.add('hidden');
         driveEmbedIframe.classList.add('hidden');
         cinemaDemoCanvas.classList.add('hidden');
@@ -3422,13 +3556,56 @@
         mainVideoPlayer.src = URL.createObjectURL(file);
         nowPlayingTitle.textContent = file.name;
         currentSourceLabel.textContent = file.name;
+        const localNotice = document.getElementById('localFileSyncNotice');
+        if (localNotice) localNotice.classList.add('hidden');
         showToast('Loaded movie: ' + file.name);
+
+        sendPeerPacket({
+          type: 'LOCAL_FILE_SELECTED',
+          fileName: file.name
+        });
+
         mainVideoPlayer.onloadedmetadata = function () {
           state.duration = mainVideoPlayer.duration || 180;
           seekTo(0, true);
           setPlayState(true, true);
         };
       });
+
+      // Mobile Companion Notice Pick File Input
+      const noticePickFileInput = document.getElementById('noticePickFileInput');
+      if (noticePickFileInput) {
+        noticePickFileInput.addEventListener('change', function (e) {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          state.mode = 'video-element';
+          state.currentLocalFileName = file.name;
+          stageEmptyOverlay.classList.add('hidden');
+          driveEmbedIframe.classList.add('hidden');
+          cinemaDemoCanvas.classList.add('hidden');
+          mainVideoPlayer.classList.remove('hidden');
+          mainVideoPlayer.srcObject = null;
+          mainVideoPlayer.src = URL.createObjectURL(file);
+          nowPlayingTitle.textContent = file.name;
+          currentSourceLabel.textContent = file.name;
+          const localNotice = document.getElementById('localFileSyncNotice');
+          if (localNotice) localNotice.classList.add('hidden');
+          showToast('Loaded movie: ' + file.name);
+          mainVideoPlayer.onloadedmetadata = function () {
+            state.duration = mainVideoPlayer.duration || 180;
+            seekTo(state.currentTime || 0, false);
+            setPlayState(state.isPlaying, false);
+          };
+        });
+      }
+
+      const closeNoticeBtn = document.getElementById('closeNoticeBtn');
+      if (closeNoticeBtn) {
+        closeNoticeBtn.addEventListener('click', function () {
+          const localNotice = document.getElementById('localFileSyncNotice');
+          if (localNotice) localNotice.classList.add('hidden');
+        });
+      }
 
       emptyOpenDriveBtn.addEventListener('click', function () {
         driveModal.classList.remove('hidden');
@@ -4049,11 +4226,16 @@
         const remoteId = inputVal.includes('room=') ? (new URLSearchParams(inputVal.split('?')[1])).get('room') : inputVal;
         state.isHost = false;
         state.remotePeerId = remoteId;
+        state.simFriendEnabled = false;
+        const simLabel = document.getElementById('simFriendBtnLabel');
+        if (simLabel) simLabel.textContent = 'Demo: OFF';
+        const friendLabel = document.getElementById('friendNameLabel');
+        if (friendLabel) friendLabel.textContent = 'Connecting...';
         updateRoleBadgeUI();
         updateConnectionStatusUI('connecting', 'Connecting to ' + remoteId + '...');
 
-        if (state.peer) {
-          const conn = state.peer.connect(remoteId);
+        function triggerConnect() {
+          const conn = state.peer.connect(remoteId, { reliable: true });
           setupPeerConnection(conn);
           if (state.localStream) {
             const call = state.peer.call(remoteId, state.localStream);
@@ -4066,6 +4248,14 @@
               document.getElementById('friendCamCanvas').classList.add('hidden');
             });
             applyCallQuality(state.preferences.callQuality);
+          }
+        }
+
+        if (state.peer) {
+          if (state.peer.open) {
+            triggerConnect();
+          } else {
+            state.peer.once('open', triggerConnect);
           }
         }
         connectModal.classList.add('hidden');
@@ -4187,22 +4377,32 @@
         const roomParam = urlParams.get('room');
         if (roomParam) {
           state.isHost = false;
-          state.remotePeerId = roomParam;
+          state.remotePeerId = roomParam.trim();
+          state.simFriendEnabled = false;
+          const simLabel = document.getElementById('simFriendBtnLabel');
+          if (simLabel) simLabel.textContent = 'Demo: OFF';
+          const friendLabel = document.getElementById('friendNameLabel');
+          if (friendLabel) friendLabel.textContent = 'Connecting to Host...';
           updateRoleBadgeUI();
-          updateConnectionStatusUI('connecting', 'Connecting to ' + roomParam + '...');
+          updateConnectionStatusUI('connecting', 'Connecting to ' + state.remotePeerId + '...');
           const remoteInput = document.getElementById('remotePeerIdInput');
-          if (remoteInput) remoteInput.value = roomParam;
-          setTimeout(function () {
-            if (state.peer) {
-              const conn = state.peer.connect(roomParam);
-              setupPeerConnection(conn);
-            }
-          }, 1200);
+          if (remoteInput) remoteInput.value = state.remotePeerId;
         }
       } catch (e) {}
 
-      appendChatMessage('Aarav', 'Hey! Ready for movie night? Choose a source or pick from the Shared Playlist 🍿', false, 0, 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80');
-      appendSyncLog('Room ' + state.roomCode + ' initialized (Solo Host)');
+      // In-App Browser Warning (WhatsApp / Instagram / Telegram)
+      try {
+        const isMobileInApp = /FBAN|FBAV|Instagram|WhatsApp|Line|MicroMessenger/i.test(navigator.userAgent);
+        if (isMobileInApp) {
+          const inAppNotice = document.getElementById('inAppBrowserNotice');
+          if (inAppNotice) inAppNotice.classList.remove('hidden');
+        }
+      } catch (e) {}
+
+      if (state.simFriendEnabled) {
+        appendChatMessage('Aarav', 'Hey! Ready for movie night? Choose a source or pick from the Shared Playlist 🍿', false, 0, 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80');
+      }
+      appendSyncLog('Room ' + state.roomCode + ' initialized (' + (state.isHost ? 'Solo Host' : 'Joining ' + state.remotePeerId) + ')');
 
       initPeerJS();
       requestAnimationFrame(mainTick);
