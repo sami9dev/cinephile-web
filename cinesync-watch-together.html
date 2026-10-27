@@ -2820,7 +2820,9 @@
           const simLabel = document.getElementById('simFriendBtnLabel');
           if (simLabel) simLabel.textContent = 'Demo: OFF';
           const friendLabel = document.getElementById('friendNameLabel');
-          if (friendLabel) friendLabel.textContent = state.friendProfile.name || (state.isHost ? 'Guest Friend' : 'Host Friend');
+          if (friendLabel) friendLabel.textContent = state.friendProfile.name || (state.isHost ? 'Guest Friend' : 'Host');
+          const friendBadge = document.getElementById('friendStateBadge');
+          if (friendBadge) friendBadge.classList.add('hidden');
           updateConnectionStatusUI('connected', 'Connected P2P (' + conn.peer + ')');
           updateRoleBadgeUI();
           showToast('Connected to friend (' + conn.peer + ')!');
